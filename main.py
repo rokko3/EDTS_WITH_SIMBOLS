@@ -1,8 +1,8 @@
 import sys
 import Impresora
 import analizador
-import re
-
+from tabla_simbolos import TablaSimbolos, Simbolo
+from codigo_tres_direcciones import GeneradorTAC, generar_tac_desde_traduccion
 reglas = {}
 tokens = {}
 
@@ -247,6 +247,9 @@ class ParserPredictivo:
         self.epsilon = 'ε'
         self.tokens = []
         self.pos = 0
+        self.tabla_simbolos = TablaSimbolos()  # Instancia de la tabla de símbolos
+        self.linea_actual = 1
+        self.columna_actual = 1
         
     def parsear(self, tokens):
         self.tokens = tokens + [('$', '$')]
@@ -266,6 +269,10 @@ class ParserPredictivo:
     
     def _construir_arbol(self, simbolo):
         token_actual = self.tokens[self.pos][0] if self.pos < len(self.tokens) else '$'
+        
+        # Para keywords, usar el lexema en lugar del tipo
+        if token_actual == 'keyword':
+            token_actual = self.tokens[self.pos][1]
         
         # Si es terminal
         if simbolo not in self.tabla:
@@ -308,93 +315,281 @@ class ParserPredictivo:
             raise SyntaxError(f"Error en {simbolo}: se esperaba {esperados}, se encontró '{token_actual}'")
     
     def _aplicar_acciones_semanticas(self, nodo, simbolo, produccion, hijos):
-
-        if simbolo == "E":
-            # E -> T E' 
-            traduccion_t = hijos[0].traduccion
-            traduccion_eprima = hijos[1].traduccion if len(hijos) > 1 else ""
-            
-            if traduccion_eprima == "":
-                nodo.traduccion = traduccion_t
-            else:
-              
-                nodo.traduccion = traduccion_eprima.replace("_", traduccion_t, 1)
         
-        elif simbolo == "E'":
-            if len(produccion) == 3 and produccion[0] == 'opsuma':
-                # E' -> + T E'
-                traduccion_t = hijos[1].traduccion
-                traduccion_eprima1 = hijos[2].traduccion
-                
-                if traduccion_eprima1 == "":
-                    # Solo hay una suma: suma(operando_izq, T)
-                    nodo.traduccion = f"suma(_, {traduccion_t})"
+        
+        if simbolo == "PROGRAMA":
+            # PROGRAMA -> SENTENCIAS
+            if len(hijos) >= 1:
+                nodo.traduccion = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+        
+        elif simbolo == "SENTENCIAS":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # SENTENCIAS -> SENTENCIA SENTENCIAS
+                sent = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                sents = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                if sents:
+                    nodo.traduccion = f"{sent}\n{sents}"
                 else:
-                    # Hay más operaciones: suma(operando_izq, E')
-
-                    parte_derecha = traduccion_eprima1.replace("_", traduccion_t, 1)
-                    nodo.traduccion = f"suma(_, {parte_derecha})"
-                
-            elif len(produccion) == 3 and produccion[0] == 'opresta':
-                # E' -> - T E'
-                traduccion_t = hijos[1].traduccion
-                traduccion_eprima1 = hijos[2].traduccion
-                
-                if traduccion_eprima1 == "":
-                    # Solo hay una resta: resta(operando_izq, T)
-                    nodo.traduccion = f"resta(_, {traduccion_t})"
-                else:
-
-                    parte_derecha = traduccion_eprima1.replace("_", traduccion_t, 1)
-                    nodo.traduccion = f"resta(_, {parte_derecha})"
+                    nodo.traduccion = sent
             else:
-                # E' -> ε
+                # SENTENCIAS -> ε
                 nodo.traduccion = ""
         
-        elif simbolo == "T":
-            # T -> F T' 
-            traduccion_f = hijos[0].traduccion
-            traduccion_tprima = hijos[1].traduccion if len(hijos) > 1 else ""
-            
-            if traduccion_tprima == "":
-                nodo.traduccion = traduccion_f
-            else:
-                # T' ya trae la operación completa, reemplazamos el marcador
-                nodo.traduccion = traduccion_tprima.replace("_", traduccion_f, 1)
-        
-        elif simbolo == "T'":
-            if len(produccion) == 3 and produccion[0] == 'opmult':
-                # T' -> * F T'
-                traduccion_f = hijos[1].traduccion
-                traduccion_tprima1 = hijos[2].traduccion
+        elif simbolo == "SENTENCIA":
+            # SENTENCIA puede tener diferentes formas
+            if len(produccion) == 2 and produccion[0] == 'identificador':
+                # SENTENCIA -> identificador SENTENCIA_ID
+                id_name = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                sentencia_id = hijos[1] if len(hijos) > 1 else None
                 
-                if traduccion_tprima1 == "":
-                    nodo.traduccion = f"mul(_, {traduccion_f})"
-                else:
-                    parte_derecha = traduccion_tprima1.replace("_", traduccion_f, 1)
-                    nodo.traduccion = f"mul(_, {parte_derecha})"
+                if sentencia_id and hasattr(sentencia_id, 'es_asignacion') and sentencia_id.es_asignacion:
+                    # Es una asignación
+                    op = sentencia_id.operador
+                    expr = sentencia_id.expresion
                     
-            elif len(produccion) == 3 and produccion[0] == 'opdiv':
-                # T' -> / F T'
-                traduccion_f = hijos[1].traduccion
-                traduccion_tprima1 = hijos[2].traduccion
-                
-                if traduccion_tprima1 == "":
-                    nodo.traduccion = f"div(_, {traduccion_f})"
+                    # AGREGAR A TABLA DE SÍMBOLOS
+                    simbolo_existente = self.tabla_simbolos.buscar_simbolo(id_name)
+                    if simbolo_existente:
+                        self.tabla_simbolos.actualizar_simbolo(id_name, valor=expr)
+                    else:
+                        self.tabla_simbolos.agregar_simbolo(
+                            nombre=id_name,
+                            tipo='variable',
+                            valor=expr,
+                            linea=self.linea_actual,
+                            columna=self.columna_actual
+                        )
+                    
+                    nodo.traduccion = f"{id_name} {op} {expr}"
                 else:
-                    parte_derecha = traduccion_tprima1.replace("_", traduccion_f, 1)
-                    nodo.traduccion = f"div(_, {parte_derecha})"
+                    # Es una expresión
+                    resto = sentencia_id.traduccion if sentencia_id and hasattr(sentencia_id, 'traduccion') else ""
+                    if resto and resto.startswith("_"):
+                        nodo.traduccion = resto.replace("_", id_name, 1)
+                    else:
+                        nodo.traduccion = f"{id_name}{resto}"
+            elif len(produccion) == 2 and produccion[0] in ('entero', 'decimal', 'hexadecimal', 'octal', 'binario'):
+                # SENTENCIA -> numero EXPRESION_REST
+                num = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                rest = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                if rest and rest.startswith("_"):
+                    nodo.traduccion = rest.replace("_", num, 1)
+                else:
+                    nodo.traduccion = f"{num}{rest}"
+            elif produccion == ('parentesis_izq', 'EXPRESION', 'parentesis_der', 'EXPR_PRIMA'):
+                # SENTENCIA -> parentesis_izq EXPRESION parentesis_der EXPR_PRIMA
+                expr = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                expr_prima = hijos[3].traduccion if len(hijos) > 3 and hasattr(hijos[3], 'traduccion') else ""
+                if expr_prima:
+                    nodo.traduccion = expr_prima.replace("_", f"({expr})", 1)
+                else:
+                    nodo.traduccion = f"({expr})"
+            elif len(produccion) == 4 and produccion[0] in ('opsuma', 'opresta'):
+                # SENTENCIA -> opsuma/opresta FACTOR TERMINO_PRIMA EXPR_PRIMA
+                op = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                factor = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                termino_prima = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+                expr_prima = hijos[3].traduccion if len(hijos) > 3 and hasattr(hijos[3], 'traduccion') else ""
+                
+                result = f"{op}{factor}"
+                if termino_prima:
+                    result = termino_prima.replace("_", result, 1)
+                if expr_prima:
+                    result = expr_prima.replace("_", result, 1)
+                nodo.traduccion = result
+            elif len(hijos) > 0:
+                nodo.traduccion = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+        
+        elif simbolo == "SENTENCIA_ID":
+            # SENTENCIA_ID -> op_asignacion EXPRESION (asignación)
+            # SENTENCIA_ID -> EXPRESION_REST (expresión)
+            if len(produccion) > 0 and produccion[0] == 'op_asignacion':
+                # Es una asignación
+                op = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else "="
+                expr = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                
+                # Guardar temporalmente para que el padre lo use
+                nodo.es_asignacion = True
+                nodo.operador = op
+                nodo.expresion = expr
+                nodo.traduccion = f"{op} {expr}"
             else:
-                # T' -> ε
+                # Es una expresión
+                rest = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                nodo.traduccion = rest
+        
+        elif simbolo == "EXPRESION_REST":
+            # EXPRESION_REST -> TERMINO_PRIMA EXPR_PRIMA
+            termino_p = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+            expr_p = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+            
+            result = "_"
+            if termino_p:
+                result = termino_p.replace("_", result, 1)
+            if expr_p:
+                result = expr_p.replace("_", result, 1)
+            nodo.traduccion = result
+        
+        elif simbolo == "ASIGNACION":
+            # ASIGNACION -> identificador op_asignacion EXPRESION
+            id_name = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+            op = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else "="
+            expr = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+            
+            # AGREGAR A TABLA DE SÍMBOLOS
+            simbolo_existente = self.tabla_simbolos.buscar_simbolo(id_name)
+            if simbolo_existente:
+                # Actualizar valor de variable existente
+                self.tabla_simbolos.actualizar_simbolo(id_name, valor=expr)
+            else:
+                # Agregar nueva variable
+                self.tabla_simbolos.agregar_simbolo(
+                    nombre=id_name,
+                    tipo='variable',
+                    valor=expr,
+                    linea=self.linea_actual,
+                    columna=self.columna_actual
+                )
+            
+            nodo.traduccion = f"{id_name} {op} {expr}"
+        
+        elif simbolo == "ELSE_OPT":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # ELSE_OPT -> else dos_puntos BLOQUE
+                bloque = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+                nodo.traduccion = f"else:\n    {bloque}"
+            else:
                 nodo.traduccion = ""
         
-        elif simbolo == "F":
-            if produccion[0] == '(':
-                # F -> ( E )
-                nodo.traduccion = f"({hijos[1].traduccion})"
+        elif simbolo == "PARAMETROS":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # PARAMETROS -> identificador PARAM_LISTA
+                param = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                lista = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                nodo.traduccion = f"{param}{lista}" if lista else param
             else:
-                # F -> entero | decimal
+                nodo.traduccion = ""
+        
+        elif simbolo == "PARAM_LISTA":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+            
+                param = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                lista = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+                nodo.traduccion = f", {param}{lista}" if lista else f", {param}"
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "BLOQUE":
+            # BLOQUE -> newline SENTENCIAS
+            sentencias = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+            nodo.traduccion = sentencias
+        
+        elif simbolo == "SENTENCIAS":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # SENTENCIAS -> SENTENCIA SENTENCIAS
+                sent = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                sents = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                if sents:
+                    nodo.traduccion = f"{sent}\n{sents}"
+                else:
+                    nodo.traduccion = sent
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "EXPRESION":
+            # EXPRESION -> TERMINO EXPR_PRIMA
+            termino = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+            expr_prima = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+            
+            if expr_prima == "":
+                nodo.traduccion = termino
+            else:
+                # Reemplazar marcador _ con el término izquierdo
+                nodo.traduccion = expr_prima.replace("_", termino, 1)
+        
+        elif simbolo == "EXPR_PRIMA":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # EXPR_PRIMA -> + TERMINO EXPR_PRIMA | - TERMINO EXPR_PRIMA
+                operador = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                termino = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                expr_prima = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+                
+                if expr_prima == "":
+                    nodo.traduccion = f"_ {operador} {termino}"
+                else:
+                    # Construir expresión anidada
+                    parte_derecha = expr_prima.replace("_", termino, 1)
+                    nodo.traduccion = f"_ {operador} {parte_derecha}"
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "SENTENCIAS":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # SENTENCIAS -> SENTENCIA SENTENCIAS_PRIMA
+                sent = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                sents_prima = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                if sents_prima:
+                    nodo.traduccion = f"{sent}\n{sents_prima}"
+                else:
+                    nodo.traduccion = sent
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "SENTENCIAS_PRIMA":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # SENTENCIAS_PRIMA -> newline SENTENCIAS
+                sents = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                nodo.traduccion = sents
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "TERMINO":
+            # TERMINO -> FACTOR TERMINO_PRIMA
+            factor = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else None
+            termino_prima = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else None
+            
+            # Asegurarse de que no sean None
+            if factor is None:
+                factor = ""
+            if termino_prima is None:
+                termino_prima = ""
+            
+            if termino_prima == "":
+                nodo.traduccion = factor
+            else:
+                nodo.traduccion = termino_prima.replace("_", factor, 1)
+        
+        elif simbolo == "TERMINO_PRIMA":
+            if len(produccion) > 1 and produccion[0] != 'ε':
+                # TERMINO_PRIMA -> * FACTOR TERMINO_PRIMA | / FACTOR TERMINO_PRIMA
+                operador = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                factor = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                termino_prima = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
+                
+                if termino_prima == "":
+                    nodo.traduccion = f"_ {operador} {factor}"
+                else:
+                    parte_derecha = termino_prima.replace("_", factor, 1)
+                    nodo.traduccion = f"_ {operador} {parte_derecha}"
+            else:
+                nodo.traduccion = ""
+        
+        elif simbolo == "FACTOR":
+            if len(produccion) == 1:
+                # FACTOR -> entero | decimal | binario | identificador
+                nodo.traduccion = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+            elif len(produccion) == 3 and produccion[0] == 'parentesis_izq':
+                # FACTOR -> parentesis_izq EXPRESION parentesis_der
+                expr = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
+                nodo.traduccion = f"({expr})"
+        
+        else:
+            # Por defecto, propagar la traducción del primer hijo
+            if len(hijos) > 0 and hasattr(hijos[0], 'traduccion'):
                 nodo.traduccion = hijos[0].traduccion
+            else:
+                nodo.traduccion = ""
+
         
 
 
@@ -418,15 +613,6 @@ def construir_tabla_prediccion(prediccion):
     
     return tabla
 
-def tabla_simbolos(tokens,lexemas):
-    tabla = {}
-    for tok, lex in zip(tokens, lexemas):
-        tabla[lex] = tok
-    print("--- TABLA DE SIMBOLOS ---")
-    i = 0
-    for lex in tabla:
-        i+=1
-        print(f"[{i}]. {lex}: {tabla[lex]}")
 def main():
     
     if len(sys.argv) != 3:
@@ -436,6 +622,10 @@ def main():
 
     nombre_archivo = sys.argv[1]
     cadena_prueba= sys.argv[2]
+    with open(cadena_prueba, 'r', encoding='utf-8') as f:
+        cadena_prueba = f.read()
+        tokens_lexicos = lexer(cadena_prueba)
+        
 
     gramatica,inicial=analizador.leer_gramatica(nombre_archivo)
     print(inicial)
@@ -450,7 +640,7 @@ def main():
     tabla_prediccion = construir_tabla_prediccion(pred)
     parser = ParserPredictivo(tabla_prediccion, inicial)
     
-    tokens_lexicos = lexer(cadena_prueba)
+    
 
     print("\n--- ANALISIS SINTACTICO ---")
     exito, resultado = parser.parsear(tokens_lexicos)
@@ -464,13 +654,22 @@ def main():
         if hasattr(resultado, 'traduccion'):
             print(f"\n--- TRADUCCION ---")
             print(f"Resultado: {resultado.traduccion}")
+        
+        
+        print("\n--- GENERANDO CODIGO DE TRES DIRECCIONES ---")
+        generador_tac = generar_tac_desde_traduccion(resultado.traduccion)
+        generador_tac.imprimir_codigo()
+        
+       
+        parser.tabla_simbolos.imprimir_tabla()
     else:
         print("✗ Error sintáctico:", resultado)
         
     print("\n--- TOKENS LEXICOS ---")
     for tok, lexema in tokens_lexicos:
         print(f"{tok}: '{lexema}'")
-    tabla_simbolos(*zip(*tokens_lexicos))
+    #tabla_simbolos(*zip(*tokens_lexicos))
+    """
     print("\n--- PRIMEROS ---")
     for nt in primeros:
         print(f"PRIMEROS({nt}) = {primeros[nt]}")
@@ -484,6 +683,7 @@ def main():
     for nt in tabla_prediccion:
         for token, produccion in tabla_prediccion[nt].items():
             print(f"M[{nt}, {token}] = {produccion}")
+    """
     
 if __name__ == "__main__":
     main()

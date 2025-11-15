@@ -91,12 +91,7 @@ class TablaSimbolos:
         return nombre_scope
     
     def salir_scope(self):
-        """
-        Sale del scope actual y regresa al scope padre
-        
-        Returns:
-            str: Nombre del scope al que se regresó
-        """
+
         if self.scopes:
             self.scope_actual = self.scopes.pop()
         else:
@@ -105,35 +100,19 @@ class TablaSimbolos:
         return self.scope_actual
     
     def obtener_simbolos_scope_actual(self):
-        """
-        Obtiene todos los símbolos del scope actual
-        
-        Returns:
-            dict: Diccionario con los símbolos del scope actual
-        """
+
         if self.scope_actual in self.tablas:
             return self.tablas[self.scope_actual].copy()
         return {}
     
     def obtener_todos_simbolos(self):
-        """
-        Obtiene todos los símbolos de todos los scopes
-        
-        Returns:
-            dict: Diccionario con todos los scopes y sus símbolos
-        """
+
         return self.tablas.copy()
     
     def imprimir_tabla(self, mostrar_todos_scopes=True):
-        """
-        Imprime la tabla de símbolos de forma legible
-        
-        Args:
-            mostrar_todos_scopes: Si True, muestra todos los scopes, si no solo el actual
-        """
-        print("\n" + "=" * 80)
+
         print("TABLA DE SÍMBOLOS")
-        print("=" * 80)
+
         
         scopes_a_mostrar = []
         if mostrar_todos_scopes:
@@ -165,11 +144,8 @@ class TablaSimbolos:
                 if simbolo.atributos:
                     for key, val in simbolo.atributos.items():
                         print(f"     └─ {key}: {val}")
-        
-        print("=" * 80)
     
     def limpiar(self):
-        """Limpia toda la tabla de símbolos"""
         self.scopes = []
         self.scope_actual = 'global'
         self.tablas = {'global': {}}
