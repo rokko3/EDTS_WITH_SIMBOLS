@@ -323,8 +323,16 @@ python main.py grammar_simple.txt test_tac.txt
 ##  Ejemplo Completo
 
 **Archivo de entrada (`test_tac.txt`):**
-```
+```bash 
 x = 10 + 5 * 2
 y = (3 + 4) * 2
 z = x - y + 1
 ```
+# Salida
+
+
+![alt text](image.png)
+# Codigo de tres direcciones
+![alt text](image-1.png)
+# Tabla de simbolos
+![alt text](image-3.png)

@@ -72,6 +72,9 @@ class TablaSimbolos:
         if simbolo:
             if valor is not None:
                 simbolo.valor = valor
+            # Actualizar tipo si se proporciona en kwargs
+            if 'tipo' in kwargs:
+                simbolo.tipo = kwargs.pop('tipo')
             simbolo.atributos.update(kwargs)
             return True
         return False
@@ -167,37 +170,3 @@ class TablaSimbolos:
             'scope_actual': self.scope_actual,
             'tipos': tipos_count
         }
-
-
-# Ejemplo de uso
-if __name__ == "__main__":
-    # Crear tabla de símbolos
-    tabla = TablaSimbolos()
-    
-    # Agregar símbolos en el scope global
-    tabla.agregar_simbolo('x', 'variable', valor=10, linea=1, columna=1)
-    tabla.agregar_simbolo('y', 'variable', valor=20, linea=2, columna=1)
-    tabla.agregar_simbolo('calcular', 'funcion', linea=4, columna=1)
-    
-    # Entrar a un nuevo scope (por ejemplo, dentro de una función)
-    tabla.entrar_scope('funcion_calcular')
-    tabla.agregar_simbolo('a', 'parametro', linea=4, columna=15)
-    tabla.agregar_simbolo('b', 'parametro', linea=4, columna=18)
-    tabla.agregar_simbolo('resultado', 'variable', valor=0, linea=5, columna=5)
-    
-    # Buscar símbolos
-    print("Buscando 'x':", tabla.buscar_simbolo('x'))
-    print("Buscando 'a':", tabla.buscar_simbolo('a'))
-    print("Buscando 'z':", tabla.buscar_simbolo('z'))
-    
-    # Actualizar símbolo
-    tabla.actualizar_simbolo('resultado', valor=30)
-    
-    # Imprimir tabla completa
-    tabla.imprimir_tabla()
-    
-    # Estadísticas
-    print("\n--- ESTADÍSTICAS ---")
-    stats = tabla.estadisticas()
-    for key, value in stats.items():
-        print(f"{key}: {value}")

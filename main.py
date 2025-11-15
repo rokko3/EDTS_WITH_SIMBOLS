@@ -1,10 +1,8 @@
 import sys
 import Impresora
 import analizador
-from tabla_simbolos import TablaSimbolos, Simbolo
-from codigo_tres_direcciones import GeneradorTAC, generar_tac_desde_traduccion
-reglas = {}
-tokens = {}
+from tabla_simbolos import TablaSimbolos
+from codigo_tres_direcciones import generar_tac_desde_traduccion
 
 # Palabras clave de Python
 KEYWORDS = {
@@ -250,6 +248,62 @@ class ParserPredictivo:
         self.tabla_simbolos = TablaSimbolos()  # Instancia de la tabla de símbolos
         self.linea_actual = 1
         self.columna_actual = 1
+    
+    def _inferir_tipo_expresion(self, nodo_expresion):
+        if not nodo_expresion:
+            return 'desconocido'
+        
+        # Buscar el primer terminal (literal) en la expresión
+        def buscar_primer_literal(nodo):
+            if not nodo:
+                return 'desconocido'
+            
+            # Los nodos usan 'valor' para almacenar el símbolo
+            simbolo_nodo = getattr(nodo, 'valor', None)
+            
+            # Si tiene produccion, verificar qué tipo de nodo es
+            if hasattr(nodo, 'produccion'):
+                # FACTOR puede tener directamente el literal
+                if simbolo_nodo and 'FACTOR' in str(simbolo_nodo):
+                    if len(nodo.produccion) == 1:
+                        # FACTOR -> literal directo
+                        tipo_literal = nodo.produccion[0]
+                        if tipo_literal in ('hexadecimal', 'octal', 'binario', 'decimal', 'entero'):
+                            return tipo_literal
+            
+            # Si es un nodo terminal (tiene valor pero no hijos o es lista vacía)
+            if simbolo_nodo:
+                if not hasattr(nodo, 'hijos') or not nodo.hijos:
+                    # Terminal - extraer el tipo del valor (formato: "tipo:literal")
+                    if ':' in str(simbolo_nodo):
+                        tipo = str(simbolo_nodo).split(':')[0]
+                        if tipo in ('hexadecimal', 'octal', 'binario', 'decimal', 'entero'):
+                            return tipo
+                        elif tipo == 'identificador':
+                            # Buscar el tipo del identificador en la tabla de símbolos
+                            if hasattr(nodo, 'traduccion') and nodo.traduccion:
+                                simbolo = self.tabla_simbolos.buscar_simbolo(nodo.traduccion)
+                                if simbolo and simbolo.tipo != 'desconocido':
+                                    return simbolo.tipo
+                            return 'identificador'
+            
+            # Buscar recursivamente en los hijos
+            if hasattr(nodo, 'hijos') and nodo.hijos:
+                tipo_id_encontrado = None
+                for hijo in nodo.hijos:
+                    resultado = buscar_primer_literal(hijo)
+                    if resultado not in ('desconocido',):
+                        if resultado != 'identificador':
+                            return resultado
+                        else:
+                            tipo_id_encontrado = 'identificador'
+                # Si solo encontramos identificadores, devolver 'identificador'
+                if tipo_id_encontrado:
+                    return tipo_id_encontrado
+            
+            return 'desconocido'
+        
+        return buscar_primer_literal(nodo_expresion)
         
     def parsear(self, tokens):
         self.tokens = tokens + [('$', '$')]
@@ -322,24 +376,12 @@ class ParserPredictivo:
             if len(hijos) >= 1:
                 nodo.traduccion = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
         
-        elif simbolo == "SENTENCIAS":
-            if len(produccion) > 1 and produccion[0] != 'ε':
-                # SENTENCIAS -> SENTENCIA SENTENCIAS
-                sent = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
-                sents = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
-                if sents:
-                    nodo.traduccion = f"{sent}\n{sents}"
-                else:
-                    nodo.traduccion = sent
-            else:
-                # SENTENCIAS -> ε
-                nodo.traduccion = ""
-        
         elif simbolo == "SENTENCIA":
             # SENTENCIA puede tener diferentes formas
             if len(produccion) == 2 and produccion[0] == 'identificador':
                 # SENTENCIA -> identificador SENTENCIA_ID
                 id_name = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
+                id_token_tipo = hijos[0].simbolo if hasattr(hijos[0], 'simbolo') else 'identificador'
                 sentencia_id = hijos[1] if len(hijos) > 1 else None
                 
                 if sentencia_id and hasattr(sentencia_id, 'es_asignacion') and sentencia_id.es_asignacion:
@@ -347,14 +389,18 @@ class ParserPredictivo:
                     op = sentencia_id.operador
                     expr = sentencia_id.expresion
                     
+                    # Inferir tipo de la expresión
+                    nodo_expr = sentencia_id.nodo_expresion if hasattr(sentencia_id, 'nodo_expresion') else None
+                    tipo_inferido = self._inferir_tipo_expresion(nodo_expr)
+                    
                     # AGREGAR A TABLA DE SÍMBOLOS
                     simbolo_existente = self.tabla_simbolos.buscar_simbolo(id_name)
                     if simbolo_existente:
-                        self.tabla_simbolos.actualizar_simbolo(id_name, valor=expr)
+                        self.tabla_simbolos.actualizar_simbolo(id_name, valor=expr, tipo=tipo_inferido)
                     else:
                         self.tabla_simbolos.agregar_simbolo(
                             nombre=id_name,
-                            tipo='variable',
+                            tipo=tipo_inferido,
                             valor=expr,
                             linea=self.linea_actual,
                             columna=self.columna_actual
@@ -412,6 +458,7 @@ class ParserPredictivo:
                 nodo.es_asignacion = True
                 nodo.operador = op
                 nodo.expresion = expr
+                nodo.nodo_expresion = hijos[1] if len(hijos) > 1 else None  # Guardar nodo para inferir tipo
                 nodo.traduccion = f"{op} {expr}"
             else:
                 # Es una expresión
@@ -429,72 +476,6 @@ class ParserPredictivo:
             if expr_p:
                 result = expr_p.replace("_", result, 1)
             nodo.traduccion = result
-        
-        elif simbolo == "ASIGNACION":
-            # ASIGNACION -> identificador op_asignacion EXPRESION
-            id_name = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
-            op = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else "="
-            expr = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
-            
-            # AGREGAR A TABLA DE SÍMBOLOS
-            simbolo_existente = self.tabla_simbolos.buscar_simbolo(id_name)
-            if simbolo_existente:
-                # Actualizar valor de variable existente
-                self.tabla_simbolos.actualizar_simbolo(id_name, valor=expr)
-            else:
-                # Agregar nueva variable
-                self.tabla_simbolos.agregar_simbolo(
-                    nombre=id_name,
-                    tipo='variable',
-                    valor=expr,
-                    linea=self.linea_actual,
-                    columna=self.columna_actual
-                )
-            
-            nodo.traduccion = f"{id_name} {op} {expr}"
-        
-        elif simbolo == "ELSE_OPT":
-            if len(produccion) > 1 and produccion[0] != 'ε':
-                # ELSE_OPT -> else dos_puntos BLOQUE
-                bloque = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
-                nodo.traduccion = f"else:\n    {bloque}"
-            else:
-                nodo.traduccion = ""
-        
-        elif simbolo == "PARAMETROS":
-            if len(produccion) > 1 and produccion[0] != 'ε':
-                # PARAMETROS -> identificador PARAM_LISTA
-                param = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
-                lista = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
-                nodo.traduccion = f"{param}{lista}" if lista else param
-            else:
-                nodo.traduccion = ""
-        
-        elif simbolo == "PARAM_LISTA":
-            if len(produccion) > 1 and produccion[0] != 'ε':
-            
-                param = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
-                lista = hijos[2].traduccion if len(hijos) > 2 and hasattr(hijos[2], 'traduccion') else ""
-                nodo.traduccion = f", {param}{lista}" if lista else f", {param}"
-            else:
-                nodo.traduccion = ""
-        
-        elif simbolo == "BLOQUE":
-            # BLOQUE -> newline SENTENCIAS
-            sentencias = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
-            nodo.traduccion = sentencias
-        
-        elif simbolo == "SENTENCIAS":
-            if len(produccion) > 1 and produccion[0] != 'ε':
-                # SENTENCIAS -> SENTENCIA SENTENCIAS
-                sent = hijos[0].traduccion if hasattr(hijos[0], 'traduccion') else ""
-                sents = hijos[1].traduccion if len(hijos) > 1 and hasattr(hijos[1], 'traduccion') else ""
-                if sents:
-                    nodo.traduccion = f"{sent}\n{sents}"
-                else:
-                    nodo.traduccion = sent
-            else:
-                nodo.traduccion = ""
         
         elif simbolo == "EXPRESION":
             # EXPRESION -> TERMINO EXPR_PRIMA
@@ -630,8 +611,8 @@ def main():
     gramatica,inicial=analizador.leer_gramatica(nombre_archivo)
     print(inicial)
     print("Gramática cargada de:", nombre_archivo)
-    for nt in gramatica:
-        print(nt, "->", [" ".join(p) for p in gramatica[nt]])
+    # for nt in gramatica:
+    #     print(nt, "->", [" ".join(p) for p in gramatica[nt]])
     
     primeros = analizador.calcular_primeros(gramatica)
     siguientes = analizador.calcular_siguientes(gramatica, inicial, primeros)
@@ -647,7 +628,7 @@ def main():
     print(resultado)
     
     if exito:
-        print("✓ Analisis sintactico EXITOSO")
+        print("Analisis sintactico EXITOSO")
         print("\n--- ARBOL DE ANALISIS ---")
         Impresora.imprimir_arbol(resultado)
         
@@ -656,14 +637,14 @@ def main():
             print(f"Resultado: {resultado.traduccion}")
         
         
-        print("\n--- GENERANDO CODIGO DE TRES DIRECCIONES ---")
+        print("\n Codigo de tres direcciones:")
         generador_tac = generar_tac_desde_traduccion(resultado.traduccion)
         generador_tac.imprimir_codigo()
         
        
         parser.tabla_simbolos.imprimir_tabla()
     else:
-        print("✗ Error sintáctico:", resultado)
+        print("[ERROR] Error sintactico:", resultado)
         
     print("\n--- TOKENS LEXICOS ---")
     for tok, lexema in tokens_lexicos:
