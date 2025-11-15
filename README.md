@@ -335,4 +335,4 @@ z = x - y + 1
 # Codigo de tres direcciones
 ![alt text](image-1.png)
 # Tabla de simbolos
-![alt text](image-3.png)
+![alt text](image-4.png)

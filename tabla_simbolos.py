@@ -131,7 +131,7 @@ class TablaSimbolos:
                 continue
             
             print(f"\n--- SCOPE: {scope} ---")
-            print(f"{'#':<4} {'Nombre':<20} {'Tipo':<15} {'Valor':<20} {'Línea':<8}")
+            print(f"{'#':<4} {'Nombre':<20} {'Tipo':<15} {'Valor':<20} ")
             print("-" * 80)
             
             for i, (nombre, simbolo) in enumerate(self.tablas[scope].items(), 1):
@@ -141,7 +141,7 @@ class TablaSimbolos:
                 
                 linea_str = str(simbolo.linea) if simbolo.linea is not None else 'N/A'
                 
-                print(f"{i:<4} {nombre:<20} {simbolo.tipo:<15} {valor_str:<20} {linea_str:<8}")
+                print(f"{i:<4} {nombre:<20} {simbolo.tipo:<15} {valor_str:<20} ")
                 
                 # Mostrar atributos adicionales si existen
                 if simbolo.atributos:
