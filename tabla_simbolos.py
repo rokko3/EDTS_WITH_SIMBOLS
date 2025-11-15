@@ -1,7 +1,7 @@
 class Simbolo:
     def __init__(self, nombre, tipo, valor=None, linea=None, columna=None, scope=None):
         self.nombre = nombre
-        self.tipo = tipo  # 'variable', 'funcion', 'clase', 'parametro', etc.
+        self.tipo = tipo  
         self.valor = valor
         self.linea = linea
         self.columna = columna

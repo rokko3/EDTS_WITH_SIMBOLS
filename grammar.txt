@@ -1,0 +1,11 @@
+E -> T E'
+E' -> opsuma T E'
+E' -> opresta T E'
+E' -> ε
+T -> F T'
+T' -> opmult F T'
+T' -> opdiv F T' 
+T' -> ε
+F -> parentesis_izq E 'parentesis_der
+F -> entero
+F -> decimal
